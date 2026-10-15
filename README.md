@@ -10,14 +10,15 @@ Interrupt it at any time, run the same command again, and it carries on where it
 - **Self-healing** – network drops and timeouts are retried with exponential backoff (30 s → 30 min).
 - **Provider-limit aware** – Gmail's daily IMAP download allowance and Yahoo throttling are detected and waited out.
 - **Safe credentials** – passwords are prompted for (hidden), passed to imapsync via temporary files so they never appear in `ps`, and wiped on exit.
-- **Gmail-label aware** – skips "All Mail", "Important" and "Starred" so mail isn't copied several times; handles older UK `[Google Mail]` accounts.
+- **Labels preserved without duplicates** – `--mode labelheader` copies every message exactly once and writes all its Gmail labels into an `X-Gmail-Labels:` header (the same header Google Takeout uses), so Thunderbird or another client can re-create them as tags later.
+- **Gmail-label aware** – in the other modes, skips "All Mail", "Important" and "Starred" so mail isn't copied several times; handles older UK `[Google Mail]` accounts.
 - **Copy-only** – never deletes anything from either account.
 - **Locking and logs** – prevents two runs against the same account pair; keeps a log per pass.
 
 ## Requirements
 
 - bash 3.2 or later (macOS default is fine), on macOS, Linux or Windows via WSL
-- imapsync 2.x
+- imapsync 2.x (not needed for `--mode labelheader`, which uses Python 3.9+ instead)
 - An app password for each account (recommended), with IMAP enabled in Gmail
 
 ## Install
@@ -43,6 +44,20 @@ chmod +x imap-migrate.sh
 ./imap-migrate.sh --user1 you@gmail.com --user2 you@yahoo.com
 ```
 
+To keep every Gmail label without duplicating any message:
+
+```bash
+./imap-migrate.sh --user1 you@gmail.com --user2 you@yahoo.com --mode labelheader
+```
+
+Each message on Yahoo then carries headers like:
+
+```
+X-Gmail-Labels: Inbox,Important,Family,Holidays 2024
+X-GM-MSGID: 1780123456789012345
+X-GM-THRID: 1780123456789000000
+```
+
 You'll be asked for both passwords. For a large mailbox, run it inside `tmux` or `screen` so closing the terminal doesn't stop it. When it finishes, run the same command once more; it should report 0 messages transferred.
 
 ## Common options
@@ -50,6 +65,8 @@ You'll be asked for both passwords. For a large mailbox, run it inside `tmux` or
 | Option | Purpose |
 | --- | --- |
 | `--host1` / `--host2` | Use other IMAP servers (defaults: `imap.gmail.com`, `imap.mail.yahoo.com`) |
+| `--mode labelheader` | Copy each message once, recording its labels in an `X-Gmail-Labels:` header |
+| `--placement system\|archive\|firstlabel` | labelheader: which one folder each message goes in (default `system`) |
 | `--mode allmail` | Copy everything into a single "Gmail Archive" folder instead of one folder per label |
 | `--keep-label-duplicates` | Copy a message into every label folder it belongs to |
 | `--include-spam-trash` | Also copy Spam and Trash |
@@ -62,6 +79,14 @@ Run `./imap-migrate.sh --help` for the full list.
 ## Documentation
 
 See the [User Manual](USER_MANUAL.md) for setup, folder choices, resuming, logs, troubleshooting and post-migration steps.
+
+## Files
+
+| File | Purpose |
+| --- | --- |
+| `imap-migrate.sh` | The command you run: prompts, retries, locking, logs |
+| `gmail-label-sync.py` | Worker used by `--mode labelheader` (can also be run on its own; see `--help`) |
+| `tests/` | Tests using fake IMAP servers: `python3 -m unittest discover -s tests` |
 
 ## License
 

@@ -30,6 +30,8 @@ You need four things in place: imapsync installed, IMAP turned on in Gmail, an a
 
 Check it worked by running `imapsync --version`.
 
+If you will only use `--mode labelheader`, you don't need imapsync. You need Python 3.9 or later instead, which most Macs and Linux systems already have. Check with `python3 --version`.
+
 ### 2. Turn on IMAP in Gmail
 
 In Gmail, open Settings, then See all settings, then Forwarding and POP/IMAP, and make sure IMAP is enabled.
@@ -49,7 +51,7 @@ Look at how much storage your Gmail mail uses (shown at the bottom of the Gmail 
 
 ### 5. Make the script runnable
 
-Save `imap-migrate.sh` somewhere convenient, open a terminal in that folder and run `chmod +x imap-migrate.sh` once.
+Save `imap-migrate.sh` and `gmail-label-sync.py` together in one folder (or clone the repository), open a terminal in that folder and run `chmod +x imap-migrate.sh` once.
 
 ## Quick start
 
@@ -89,7 +91,9 @@ Only `--user1` and `--user2` are required; every other option has a sensible def
 | `--port2 N` | Destination port (SSL) | 993 |
 | `--auth1 password\|oauth` | Source login method: app password or OAuth2 access token | password |
 | `--auth2 password\|oauth` | Destination login method | password |
-| `--mode labels\|allmail` | How Gmail labels become Yahoo folders (see next section) | labels |
+| `--mode labels\|allmail\|labelheader` | How Gmail labels are carried across (see next section) | labels |
+| `--placement system\|archive\|firstlabel` | labelheader mode: which one folder each message goes in | system |
+| `--archive-folder NAME` | Name of the archive folder (allmail and labelheader modes) | Gmail Archive |
 | `--keep-label-duplicates` | Copy a message into every label folder it has | Off |
 | `--include-spam-trash` | Also copy Spam and Trash | Off |
 | `--max-retries N` | Stop after N failed passes; 0 means never give up | 0 |
@@ -115,6 +119,7 @@ Gmail does not really have folders. It has labels, and one email can carry sever
 | Labels, one copy each | (none, the default) | A folder per label. An email with several labels lands only in the first folder it is found in, Inbox first. | Most people |
 | Labels, full copies | `--keep-label-duplicates` | A folder per label, each complete. Emails with several labels are stored several times. | Keeping every label folder exactly as in Gmail, if Yahoo has the space |
 | One archive folder | `--mode allmail` | All your mail in a single folder called "Gmail Archive" | Keeping one searchable archive with no duplicates |
+| One copy, labels in a header | `--mode labelheader` | Each email once, in one folder, with all its labels listed in an `X-Gmail-Labels:` header | Keeping every label with no duplicates, to re-create as tags in Thunderbird |
 
 Whatever you choose:
 
@@ -125,6 +130,55 @@ Whatever you choose:
 - Older UK accounts that show "[Google Mail]" instead of "[Gmail]" are handled automatically.
 
 Pick one mode and stick with it for the whole migration. Switching mode partway through will copy mail again into the new layout.
+
+### Keeping labels with `--mode labelheader`
+
+This mode reads Gmail's "All Mail" folder, where every email appears exactly once, and copies each one to a single Yahoo folder. All its Gmail labels are written into the message itself:
+
+```
+X-Gmail-Labels: Inbox,Important,Family,Holidays 2024
+X-GM-MSGID: 1780123456789012345
+X-GM-THRID: 1780123456789000000
+```
+
+`X-Gmail-Labels` is the same header Google Takeout uses. `X-GM-MSGID` is Gmail's permanent ID for the message, which the script uses to avoid copying it twice. `X-GM-THRID` identifies the Gmail conversation. Labels with accented or non-Latin characters are stored in standard encoded form, which mail programs decode automatically.
+
+```bash
+./imap-migrate.sh --user1 you@gmail.com --user2 you@yahoo.com --mode labelheader --dry-run
+./imap-migrate.sh --user1 you@gmail.com --user2 you@yahoo.com --mode labelheader
+```
+
+The dry run shows how many emails would go into each Yahoo folder. Choose the folder layout with `--placement`:
+
+| Placement | Where each email goes |
+| --- | --- |
+| `system` (default) | Inbox, Sent and Drafts go to Yahoo's own folders; everything else to "Gmail Archive" |
+| `firstlabel` | As `system`, but other emails go to a folder named after their first label (alphabetically), or the archive if they have none |
+| `archive` | Everything into "Gmail Archive" |
+
+With `--include-spam-trash`, Gmail Spam goes to Yahoo's Spam (Bulk) folder and Trash to Yahoo's Trash.
+
+Things to know:
+
+- Progress is kept in `labelheader-state.sqlite` in the state folder. Delete it only if you want to start from scratch.
+- If Yahoo refuses a particular email (for example, one that is too large), the script records it, tries again on the next two runs, then gives up on it. Refused emails are listed at the end of each run.
+- Labels you change in Gmail after an email has been copied are not updated on Yahoo.
+- In Gmail's settings, Labels tab, "All Mail" must have "Show in IMAP" ticked. That is the default.
+
+### Turning the header into Thunderbird tags
+
+You can do this whenever you like, and repeat it, because the header stays with each email.
+
+1. In Thunderbird, add your Yahoo account and let it download the folders.
+2. Create a tag for each label you want: Settings, General, Tags, Add.
+3. Open Tools, Message Filters, choose the Yahoo account, then New.
+4. In the first condition's drop-down choose Customize, add the header `X-Gmail-Labels`, then select it.
+5. Set the condition to "X-Gmail-Labels contains Family" and the action to "Tag Message: Family". Repeat for each label, or add several conditions to one filter.
+6. Select the filter, pick a folder in "Run selected filter(s) on", then Run Now. Repeat for each folder.
+
+"Contains" also matches longer labels: "Family" matches "Family Photos" too. If that matters, filter on the longer label first, or use the FiltaQuilla add-on, which allows regular expressions such as `(^|,)Family(,|$)`.
+
+Thunderbird saves tags to the server as IMAP keywords, and Yahoo may not keep custom keywords. If tags disappear, they only exist in Thunderbird. Nothing is lost, because you can run the filters again at any time.
 
 ## Interruptions, resuming and long runs
 
@@ -196,6 +250,10 @@ Most problems are login-related and fixed by a fresh app password. For anything 
 | imapsync rejected the options | A typo in extra arguments after `--` | Check or remove those arguments |
 | login keeps failing mid-run | App password revoked, or OAuth token expired | Run again and re-enter the passwords; prefer app passwords |
 | Duplicate emails on Yahoo | Mode changed between runs, or Gmail and Yahoo both received copies via forwarding | Keep one mode for the whole job; turn on forwarding only after migrating |
+| python3 not found / too old | labelheader mode needs Python 3.9+ | Install Python 3 (`brew install python` or `sudo apt install python3`) |
+| cannot find gmail-label-sync.py | The worker file was not kept next to the script | Keep both files in the same folder |
+| cannot find Gmail's 'All Mail' folder | "Show in IMAP" is off for All Mail | In Gmail settings, Labels tab, tick "Show in IMAP" for All Mail |
+| labelheader mode needs a Gmail source | `--host1` is not a Gmail server | labelheader only works when copying from Gmail |
 | Very slow start | imapsync is reading message headers in every folder before copying | Normal for large mailboxes; it speeds up once copying begins |
 
 If you get stuck, send the last 30 lines of `migrate.log` and of the newest run log to whoever is helping you. Check first that nothing private is in them.
